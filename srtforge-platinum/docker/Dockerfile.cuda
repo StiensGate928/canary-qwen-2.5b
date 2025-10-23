@@ -1,0 +1,22 @@
+FROM nvcr.io/nvidia/pytorch:23.10-py3
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    git \
+    build-essential \
+    sox \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build SCTK (ROVER)
+COPY scripts/build_sctk.sh /tmp/build_sctk.sh
+RUN bash /tmp/build_sctk.sh && rm /tmp/build_sctk.sh
+
+WORKDIR /workspace
+COPY . /workspace
+
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt && \
+    pip install -e .
+
+CMD ["srtforge", "--help"]

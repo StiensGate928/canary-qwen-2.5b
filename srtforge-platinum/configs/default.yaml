@@ -1,0 +1,36 @@
+paths:
+  temp_dir: ./tmp
+  output_dir: ./output
+frontend:
+  prefer_center: true
+  demucs_model: htdemucs
+  arnndn_model: rnnoise
+  afftdn_nf: -25
+  denoise: true
+  normalize: true
+vad:
+  noise_db: -33
+  min_sil: 0.35
+  pad: 0.10
+chunking:
+  max_len: 36.0
+  overlap: 1.0
+salm_context:
+  model_id: nvidia/canary-qwen-2.5b
+  carry_sentences: 2
+  max_context_chars: 220
+  keywords_file: null
+parakeet:
+  model_id: nvidia/parakeet-rnnt-1.1b
+  enabled: true
+combination:
+  enable_rover: true
+  method: maxconf
+alignment:
+  use_mfa: false
+  mfa_dict: null
+  mfa_acoustic: null
+reading:
+  max_chars_per_line: 42
+  max_lines: 2
+  min_duration_s: 1.0
