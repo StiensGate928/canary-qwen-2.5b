@@ -9,8 +9,8 @@ back into the original media container.
 ## Why Platinum?
 
 * **Front-end audio excellence** – Prefer center channels on 5.1 mixes, fall
-  back to Demucs vocal separation, then apply denoise/normalize/loudness match
-  before ASR.
+  back to RoFormer-based vocal separation (Mel-Band RoFormer or BandIt), then
+  apply denoise/normalize/loudness match before ASR.
 * **Long-form resilience** – Canary SALM is chunked in 30–36 s windows with
   1 s overlap, contextual carry-over, and optional keyword prompting to keep
   character names straight across episodes.
@@ -51,7 +51,7 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-The heavy ML dependencies (PyTorch, NeMo, Demucs) are part of
+The heavy ML dependencies (PyTorch, NeMo) are part of
 `requirements.txt`. On CUDA hosts you may prefer to install the wheel matching
 your driver manually, e.g.
 
@@ -67,7 +67,7 @@ cd NeMo
 pip install -e ".[asr]"
 ```
 
-Demucs and other Python dependencies are handled by `pip install -r requirements.txt`.
+RoFormer separation helpers and other Python dependencies are handled by `pip install -r requirements.txt`.
 
 ### Model downloads
 
@@ -116,6 +116,8 @@ Important CLI toggles:
 
 * `frontend.prefer_center`: favour 5.1 center extraction; pair with
   `--no-prefer-center` to override.
+* `separation.backend`: choose between `none`, `fv4`, or `bandit` for dialogue
+  isolation. Use `--sep` and the related CLI flags to override per run.
 * `chunking.max_len` / `chunking.overlap`: SALM window size and overlap.
 * `salm_context.carry_sentences`: number of sentences persisted between chunks.
 * `reading.max_chars_per_line`: subtitle formatting constraints used by the SRT
@@ -128,8 +130,9 @@ starting with `#` are ignored.
 
 1. **Audio extraction** – FFmpeg grabs the preferred stream. The CUDA Dockerfile
    uses `pan=mono|c0=FC` to isolate the center channel when present.
-2. **Optional separation** – Demucs vocal extraction engages when the center
-   channel is absent.
+2. **Optional separation** – RoFormer-based isolation (Mel-Band RoFormer
+   `voc_fv4` or BandIt) handles dialogue-only stems when the center channel is
+   absent or insufficient.
 3. **Preprocessing** – FFmpeg filters (high-pass, RNNoise, afftdn, de-esser,
    compressor, loudnorm) produce a clean 16 kHz mono file for ASR.
 4. **Chunking** – VAD + silence detection boundaries are merged and chunked into
@@ -162,8 +165,9 @@ GitHub Actions CI mirrors the above checks on Python 3.10 and 3.11.
 
 After downloading the models and building SCTK once, the pipeline runs fully
 offline. Configure the NeMo cache via `NEMO_CACHE_DIR` and set
-`XDG_CACHE_HOME`/`DEMUCSPATH` as desired to keep checkpoints in a persistent
-location. The CLI stores intermediate files in `configs/default.yaml -> paths.temp_dir`.
+`XDG_CACHE_HOME`/custom model directories for the BandIt and Mel-Band RoFormer
+checkpoints to keep them in persistent storage. The CLI stores intermediate
+files in `configs/default.yaml -> paths.temp_dir`.
 
 ## Troubleshooting
 

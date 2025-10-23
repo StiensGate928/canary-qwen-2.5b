@@ -3,11 +3,27 @@ paths:
   output_dir: ./output
 frontend:
   prefer_center: true
-  demucs_model: htdemucs
   arnndn_model: rnnoise
   afftdn_nf: -25
   denoise: true
   normalize: true
+separation:
+  backend: bandit            # one of: [none, fv4, bandit]
+  # Common
+  sr_frontend_hz: 44100      # pre-sep resample for RoFormer/Bandit (high-quality soxr)
+  prefer_center: true        # try 5.1 center channel first; if not available, fall back to separation
+  # fv4 (Mel-Band RoFormer)
+  fv4:
+    repo_dir: "/opt/mel-band-roformer"         # path to cloned repo: KimberleyJensen/Mel-Band-Roformer-Vocal-Model
+    cfg: "/models/config_vocals_mel_band_roformer.yaml"   # your YAML
+    ckpt: "/models/voc_fv4.ckpt"               # your checkpoint
+    num_overlap: 6                              # overlap-chunk inference (good default)
+  # bandit / bandit-v2 (cinema)
+  bandit:
+    repo_dir: "/opt/bandit"                    # path to cloned repo: kwatcharasupat/bandit (or bandit-v2)
+    ckpt: "/models/bandit_vocals.ckpt"         # your checkpoint
+    cfg: "/models/bandit_vocals.yaml"          # will be copied/renamed to hparams.yaml next to ckpt
+    model_name: "BandIt Vocals V7"             # model id used by the repo’s inference.py
 vad:
   noise_db: -33
   min_sil: 0.35

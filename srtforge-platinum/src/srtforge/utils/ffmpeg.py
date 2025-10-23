@@ -32,6 +32,18 @@ def require_binary(name: str) -> str:
     return resolved
 
 
+def have_binary(name: str, fatal: bool = False) -> bool:
+    """Return True if a binary is present; optionally raise when missing."""
+
+    try:
+        require_binary(name)
+    except FileNotFoundError:
+        if fatal:
+            raise
+        return False
+    return True
+
+
 def run_command(command: Iterable[str], check: bool = True) -> subprocess.CompletedProcess[str]:
     """Run a subprocess command returning its completion object."""
     command_list: List[str] = list(command)
@@ -47,6 +59,14 @@ def run_command(command: Iterable[str], check: bool = True) -> subprocess.Comple
             "FFmpeg command failed",
         )
     return result
+
+
+def run_ffmpeg(arguments: Iterable[str], ffmpeg_binary: str = "ffmpeg") -> subprocess.CompletedProcess[str]:
+    """Execute FFmpeg with the provided arguments."""
+
+    require_binary(ffmpeg_binary)
+    command: List[str] = [ffmpeg_binary, *list(arguments)]
+    return run_command(command, check=True)
 
 
 def extract_audio(
@@ -99,7 +119,9 @@ def extract_audio(
 __all__ = [
     "binary_available",
     "require_binary",
+    "have_binary",
     "run_command",
+    "run_ffmpeg",
     "extract_audio",
     "FFmpegError",
 ]
