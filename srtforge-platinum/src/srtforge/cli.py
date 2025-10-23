@@ -155,7 +155,31 @@ def build_parser() -> argparse.ArgumentParser:
     transcribe.add_argument("--lang", default="eng")
     transcribe.add_argument("--prefer-center", dest="prefer_center", action="store_true", default=None)
     transcribe.add_argument("--no-prefer-center", dest="prefer_center", action="store_false")
-    transcribe.add_argument("--no-sep", action="store_true", help="Disable Demucs separation")
+    transcribe.add_argument(
+        "--sep",
+        choices=["none", "fv4", "bandit"],
+        help="Voice isolation backend. Overrides config.separation.backend",
+    )
+    transcribe.add_argument(
+        "--sep-repo",
+        type=Path,
+        help="Path to separation repo (fv4/bandit)",
+    )
+    transcribe.add_argument(
+        "--sep-ckpt",
+        type=Path,
+        help="Separation checkpoint (.ckpt)",
+    )
+    transcribe.add_argument(
+        "--sep-cfg",
+        type=Path,
+        help="Separation config (.yaml)",
+    )
+    transcribe.add_argument(
+        "--bandit-model-name",
+        type=str,
+        help="Bandit model_name for inference.py (e.g., 'BandIt Vocals V7')",
+    )
     transcribe.add_argument("--keywords", type=Path, default=None)
     transcribe.add_argument("--cpu", action="store_true")
     transcribe.add_argument("--with-parakeet", action="store_true")
@@ -170,6 +194,27 @@ def _apply_cli_overrides(config: PipelineConfig, args: argparse.Namespace) -> Pi
     overrides = {}
     if args.prefer_center is not None:
         overrides.setdefault("frontend", {})["prefer_center"] = args.prefer_center
+        overrides.setdefault("separation", {})["prefer_center"] = args.prefer_center
+    if args.sep:
+        overrides.setdefault("separation", {})["backend"] = args.sep
+    selected_backend = args.sep or config.separation.backend
+    if args.sep_repo:
+        if selected_backend == "fv4":
+            overrides.setdefault("separation", {}).setdefault("fv4", {})["repo_dir"] = args.sep_repo
+        elif selected_backend == "bandit":
+            overrides.setdefault("separation", {}).setdefault("bandit", {})["repo_dir"] = args.sep_repo
+    if args.sep_ckpt:
+        if selected_backend == "fv4":
+            overrides.setdefault("separation", {}).setdefault("fv4", {})["ckpt"] = args.sep_ckpt
+        elif selected_backend == "bandit":
+            overrides.setdefault("separation", {}).setdefault("bandit", {})["ckpt"] = args.sep_ckpt
+    if args.sep_cfg:
+        if selected_backend == "fv4":
+            overrides.setdefault("separation", {}).setdefault("fv4", {})["cfg"] = args.sep_cfg
+        elif selected_backend == "bandit":
+            overrides.setdefault("separation", {}).setdefault("bandit", {})["cfg"] = args.sep_cfg
+    if args.bandit_model_name:
+        overrides.setdefault("separation", {}).setdefault("bandit", {})["model_name"] = args.bandit_model_name
     if args.with_parakeet:
         overrides.setdefault("parakeet", {})["enabled"] = True
     else:

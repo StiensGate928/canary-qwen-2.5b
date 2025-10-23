@@ -2,11 +2,10 @@
 
 from .extract import AudioExtractor
 from .preprocess import AudioPreprocessor
-from .separate import DemucsSeparator, SeparationUnavailable
+from .separate import separate_dialogue
 
 __all__ = [
     "AudioExtractor",
     "AudioPreprocessor",
-    "DemucsSeparator",
-    "SeparationUnavailable",
+    "separate_dialogue",
 ]

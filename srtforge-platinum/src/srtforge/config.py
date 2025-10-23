@@ -13,11 +13,35 @@ import yaml
 @dataclass(slots=True)
 class FrontendConfig:
     prefer_center: bool = True
-    demucs_model: str = "htdemucs"
     arnndn_model: str = "rnnoise"
     afftdn_nf: float = -25.0
     denoise: bool = True
     normalize: bool = True
+
+
+@dataclass(slots=True)
+class SeparationFv4Config:
+    repo_dir: pathlib.Path = pathlib.Path("/opt/mel-band-roformer")
+    cfg: pathlib.Path = pathlib.Path("/models/config_vocals_mel_band_roformer.yaml")
+    ckpt: pathlib.Path = pathlib.Path("/models/voc_fv4.ckpt")
+    num_overlap: int = 6
+
+
+@dataclass(slots=True)
+class SeparationBanditConfig:
+    repo_dir: pathlib.Path = pathlib.Path("/opt/bandit")
+    ckpt: pathlib.Path = pathlib.Path("/models/bandit_vocals.ckpt")
+    cfg: pathlib.Path = pathlib.Path("/models/bandit_vocals.yaml")
+    model_name: str = "BandIt Vocals V7"
+
+
+@dataclass(slots=True)
+class SeparationConfig:
+    backend: str = "bandit"
+    sr_frontend_hz: int = 44100
+    prefer_center: bool = True
+    fv4: SeparationFv4Config = field(default_factory=SeparationFv4Config)
+    bandit: SeparationBanditConfig = field(default_factory=SeparationBanditConfig)
 
 
 @dataclass(slots=True)
@@ -83,6 +107,7 @@ class ModelConfig:
 class PipelineConfig:
     paths: PathsConfig = field(default_factory=PathsConfig)
     frontend: FrontendConfig = field(default_factory=FrontendConfig)
+    separation: SeparationConfig = field(default_factory=SeparationConfig)
     vad: VadConfig = field(default_factory=VadConfig)
     chunking: ChunkConfig = field(default_factory=ChunkConfig)
     salm_context: SalmConfig = field(default_factory=SalmConfig)
