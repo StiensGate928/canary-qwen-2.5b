@@ -6,24 +6,48 @@ import subprocess as sp
 from pathlib import Path
 
 
+def build_preprocess_filter_chain(
+    arnndn_model: str = "rnnoise",
+    afftdn_nf: float = -25.0,
+    enable_denoise: bool = True,
+    enable_normalize: bool = True,
+) -> str:
+    """Construct the FFmpeg filter chain for preprocessing."""
+
+    filters = ["highpass=f=80"]
+    if enable_denoise:
+        if arnndn_model:
+            filters.append(f"arnndn=m={arnndn_model}")
+        else:
+            filters.append("arnndn")
+        filters.append(f"afftdn=nf={afftdn_nf}")
+    filters.extend(
+        [
+            "deesser=i=6",
+            "acompressor=threshold=-22dB:ratio=2:attack=5:release=50:makeup=2",
+        ]
+    )
+    if enable_normalize:
+        filters.append("loudnorm=I=-16:LRA=7:TP=-3")
+    filters.append("aresample=16000:resampler=soxr:precision=28")
+    return ",".join(filters)
+
+
 def preprocess_and_resample_16k(
     in_wav: Path,
     out_wav: Path,
     arnndn_model: str = "rnnoise",
     afftdn_nf: float = -25.0,
+    enable_denoise: bool = True,
+    enable_normalize: bool = True,
 ) -> None:
     """Run the production filter chain before 16 kHz resampling."""
 
-    filters = ",".join(
-        [
-            "highpass=f=80",
-            f"arnndn=m={arnndn_model}" if arnndn_model else "arnndn",
-            f"afftdn=nf={afftdn_nf}",
-            "deesser=i=6",
-            "acompressor=threshold=-22dB:ratio=2:attack=5:release=50:makeup=2",
-            "loudnorm=I=-16:LRA=7:TP=-3",
-            "aresample=16000:resampler=soxr:precision=28",
-        ]
+    filters = build_preprocess_filter_chain(
+        arnndn_model=arnndn_model,
+        afftdn_nf=afftdn_nf,
+        enable_denoise=enable_denoise,
+        enable_normalize=enable_normalize,
     )
     cmd = [
         "ffmpeg",
@@ -42,4 +66,4 @@ def preprocess_and_resample_16k(
     sp.run(cmd, check=True)
 
 
-__all__ = ["preprocess_and_resample_16k"]
+__all__ = ["build_preprocess_filter_chain", "preprocess_and_resample_16k"]

@@ -62,7 +62,9 @@ def run_command(command: Iterable[str], check: bool = True) -> subprocess.Comple
     return result
 
 
-def run_ffmpeg(arguments: Iterable[str], ffmpeg_binary: str = "ffmpeg") -> subprocess.CompletedProcess[str]:
+def run_ffmpeg(
+    arguments: Iterable[str], ffmpeg_binary: str = "ffmpeg"
+) -> subprocess.CompletedProcess[str]:
     """Execute FFmpeg with the provided arguments."""
 
     require_binary(ffmpeg_binary)
@@ -98,6 +100,16 @@ def probe_audio_duration(path: Path) -> float:
         return float(info.get("duration", 0.0))
     except (TypeError, ValueError):
         return 0.0
+
+
+def probe_audio_channels(path: Path) -> int:
+    """Return the channel count for ``path`` using ffprobe."""
+
+    info = _probe_audio_stream(path)
+    try:
+        return int(info.get("channels", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def extract_dialog_source(
@@ -138,6 +150,31 @@ def extract_dialog_source(
     subprocess.run(cmd, check=True)
 
 
+def run_silencedetect(
+    input_audio: Path,
+    noise_db: float,
+    min_silence: float,
+    ffmpeg_binary: str = "ffmpeg",
+) -> List[str]:
+    """Execute ``silencedetect`` and return the emitted log lines."""
+
+    result = run_ffmpeg(
+        [
+            "-hide_banner",
+            "-i",
+            str(input_audio),
+            "-af",
+            f"silencedetect=noise={noise_db}dB:duration={min_silence}",
+            "-f",
+            "null",
+            "-",
+        ],
+        ffmpeg_binary=ffmpeg_binary,
+    )
+    stderr = result.stderr or ""
+    return stderr.splitlines()
+
+
 __all__ = [
     "binary_available",
     "require_binary",
@@ -146,5 +183,7 @@ __all__ = [
     "run_ffmpeg",
     "extract_dialog_source",
     "probe_audio_duration",
+    "probe_audio_channels",
+    "run_silencedetect",
     "FFmpegError",
 ]

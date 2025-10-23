@@ -23,7 +23,7 @@ from .config import (
     validate_config,
 )
 from .logging import configure_logging, get_logger
-from .segment.chunker import Chunk, Chunker
+from .segment import Chunk, Chunker, invert_silences, merge_speech_spans, parse_silencedetect
 from .srt.writer import SRTWriter, SubtitleSegment
 from .utils import ffmpeg
 from .utils.text import update_carry_sentences
@@ -64,13 +64,31 @@ class SubtitlePipeline:
         pattern = "**/*" if recursive else "*"
         return [p for p in source.glob(pattern) if p.suffix.lower() in SUPPORTED_EXTENSIONS]
 
-    def _plan_chunks(self, duration: float) -> List[Chunk]:
+    def _plan_chunks(self, audio_path: Path, duration: float) -> List[Chunk]:
         chunker = Chunker(
             max_len=self._config.chunking.max_len,
             overlap=self._config.chunking.overlap,
         )
         spans: List[Tuple[float, float]] = [(0.0, duration)]
-        return chunker.chunk_from_pairs(spans)
+        vad_cfg = self._config.vad
+        try:
+            log_lines = ffmpeg.run_silencedetect(
+                audio_path,
+                noise_db=vad_cfg.noise_db,
+                min_silence=vad_cfg.min_silence,
+            )
+            silences = parse_silencedetect(log_lines)
+            speech = invert_silences(silences, duration)
+            if speech:
+                spans = [(interval.start, interval.end) for interval in speech]
+        except Exception as exc:
+            LOGGER.warning(
+                "VAD failed for %s: %s; falling back to uniform chunking",
+                audio_path,
+                exc,
+            )
+        merged = merge_speech_spans(spans, pad=vad_cfg.pad)
+        return chunker.chunk(merged)
 
     def _cut_chunk(self, source: Path, start: float, end: float, target: Path) -> None:
         cmd = [
@@ -91,10 +109,55 @@ class SubtitlePipeline:
         ]
         sp.run(cmd, check=True)
 
+    def _maybe_separate(self, extracted: Path, temp_dir: Path, video_path: Path) -> Path:
+        sep_cfg = self._config.separation
+        if not sep_cfg.backend or sep_cfg.backend == "none":
+            return extracted
+        channels = ffmpeg.probe_audio_channels(extracted)
+        if channels <= 1:
+            LOGGER.info("Skipping separation for %s: extracted audio already mono", video_path)
+            return extracted
+        separated = temp_dir / f"{video_path.stem}_separated.wav"
+        return separate_dialogue(
+            extracted,
+            separated,
+            sep_cfg.backend,
+            sr_frontend_hz=sep_cfg.sr_frontend_hz,
+            prefer_center_first=sep_cfg.prefer_center,
+            fv4_repo_dir=getattr(sep_cfg.fv4, "repo_dir", None),
+            fv4_cfg=getattr(sep_cfg.fv4, "cfg", None),
+            fv4_ckpt=getattr(sep_cfg.fv4, "ckpt", None),
+            fv4_num_overlap=getattr(sep_cfg.fv4, "num_overlap", 6),
+            bandit_repo_dir=getattr(sep_cfg.bandit, "repo_dir", None),
+            bandit_ckpt=getattr(sep_cfg.bandit, "ckpt", None),
+            bandit_cfg=getattr(sep_cfg.bandit, "cfg", None),
+            bandit_model_name=getattr(sep_cfg.bandit, "model_name", None),
+        )
+
     def _maybe_embed(self, video_path: Path, srt_path: Path) -> None:
         if not self._embed:
             return
-        LOGGER.info("Embedding subtitles into %s (not implemented)", video_path)
+        output = video_path.with_suffix(".subs.mkv")
+        LOGGER.info("Embedding subtitles into %s", output)
+        ffmpeg.run_ffmpeg(
+            [
+                "-y",
+                "-hide_banner",
+                "-i",
+                str(video_path),
+                "-i",
+                str(srt_path),
+                "-map",
+                "0",
+                "-map",
+                "1",
+                "-c",
+                "copy",
+                "-c:s",
+                "srt",
+                str(output),
+            ]
+        )
 
     def _load_salm(self) -> CanarySALM:
         cfg = SALMConfig(
@@ -131,25 +194,7 @@ class SubtitlePipeline:
         temp_dir.mkdir(parents=True, exist_ok=True)
         extracted = self._audio_extractor.extract(video_path, temp_dir, language=self._language)
 
-        separated_source = extracted
-        sep_cfg = self._config.separation
-        if sep_cfg.backend and sep_cfg.backend != "none":
-            separated = temp_dir / f"{video_path.stem}_separated.wav"
-            separated_source = separate_dialogue(
-                extracted,
-                separated,
-                sep_cfg.backend,
-                sr_frontend_hz=sep_cfg.sr_frontend_hz,
-                prefer_center_first=sep_cfg.prefer_center,
-                fv4_repo_dir=getattr(sep_cfg.fv4, "repo_dir", None),
-                fv4_cfg=getattr(sep_cfg.fv4, "cfg", None),
-                fv4_ckpt=getattr(sep_cfg.fv4, "ckpt", None),
-                fv4_num_overlap=getattr(sep_cfg.fv4, "num_overlap", 6),
-                bandit_repo_dir=getattr(sep_cfg.bandit, "repo_dir", None),
-                bandit_ckpt=getattr(sep_cfg.bandit, "ckpt", None),
-                bandit_cfg=getattr(sep_cfg.bandit, "cfg", None),
-                bandit_model_name=getattr(sep_cfg.bandit, "model_name", None),
-            )
+        separated_source = self._maybe_separate(extracted, temp_dir, video_path)
 
         cleaned = temp_dir / f"{video_path.stem}_clean.wav"
         preprocess_and_resample_16k(
@@ -157,9 +202,11 @@ class SubtitlePipeline:
             cleaned,
             arnndn_model=self._config.frontend.arnndn_model,
             afftdn_nf=self._config.frontend.afftdn_nf,
+            enable_denoise=self._config.frontend.denoise,
+            enable_normalize=self._config.frontend.normalize,
         )
         duration = ffmpeg.probe_audio_duration(cleaned)
-        chunks = self._plan_chunks(duration or self._config.chunking.max_len)
+        chunks = self._plan_chunks(cleaned, duration or self._config.chunking.max_len)
 
         salm = self._load_salm()
         parakeet = self._load_parakeet()
