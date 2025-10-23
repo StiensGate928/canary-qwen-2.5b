@@ -1,0 +1,20 @@
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    git \
+    build-essential \
+    sox \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/build_sctk.sh /tmp/build_sctk.sh
+RUN bash /tmp/build_sctk.sh && rm /tmp/build_sctk.sh
+
+WORKDIR /workspace
+COPY . /workspace
+
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt && \
+    pip install -e .
+
+CMD ["srtforge", "--help"]

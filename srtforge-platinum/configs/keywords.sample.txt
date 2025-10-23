@@ -1,0 +1,4 @@
+# Sample keyword list for contextual prompting
+protagonist
+villain
+spell

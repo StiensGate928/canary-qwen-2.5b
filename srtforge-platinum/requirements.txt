@@ -1,0 +1,5 @@
+PyYAML>=6.0
+tqdm>=4.66
+torch>=2.1.0
+nemo_toolkit[asr]>=1.23.0
+demucs>=4.0.0
