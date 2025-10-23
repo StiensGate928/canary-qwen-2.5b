@@ -1,54 +1,59 @@
-"""ROVER combination wrapper."""
+"""ROVER combination helpers."""
 
 from __future__ import annotations
 
-from typing import Iterable, List
+import subprocess as sp
+import tempfile
+from pathlib import Path
+from typing import List, Tuple
 
 from ..logging import get_logger
-from ..utils import ffmpeg
-from ..asr.ctm import CTMEntry, text_from_ctm
 
-LOGGER = get_logger("combine.rover")
+log = get_logger("combine.rover")
 
 
-class RoverNotAvailable(RuntimeError):
-    """Raised when the SCTK rover binary is unavailable."""
+def _run_rover(hyp_a_ctm: Path, hyp_b_ctm: Path, out_ctm: Path, method: str = "maxconf") -> None:
+    cmd = [
+        "rover",
+        "-h",
+        str(hyp_a_ctm),
+        "ctm",
+        "-h",
+        str(hyp_b_ctm),
+        "ctm",
+        "-o",
+        str(out_ctm),
+        "-m",
+        method,
+    ]
+    log.debug("ROVER cmd: %s", " ".join(cmd))
+    sp.run(cmd, check=True)
 
 
-class RoverCombiner:
-    """Coordinate ROVER combination using SCTK."""
+def combine_per_chunk(
+    chunks: List[Tuple[float, float]],
+    canary_ctms: List[List[str]],
+    parakeet_ctms: List[List[str]],
+    method: str = "maxconf",
+) -> List[List[str]]:
+    """Run ROVER independently per chunk and return local CTMs."""
 
-    def __init__(self, rover_binary: str = "rover") -> None:
-        self._rover_binary = rover_binary
+    if not (len(chunks) == len(canary_ctms) == len(parakeet_ctms)):
+        raise ValueError("Chunk metadata and CTM lists must be aligned")
 
-    def assert_available(self) -> None:
-        try:
-            ffmpeg.require_binary(self._rover_binary)
-        except FileNotFoundError as exc:
-            raise RoverNotAvailable("SCTK rover binary is required for system combination") from exc
-
-    def combine(self, systems: Iterable[List[CTMEntry]]) -> List[CTMEntry]:
-        """Return the consensus transcript.
-
-        The reference implementation does not shell out to the real binary but
-        instead merges the highest-confidence CTM entries to provide deterministic
-        behaviour for tests.
-        """
-        merged: List[CTMEntry] = []
-        for system in systems:
-            merged.extend(system)
-        merged.sort(key=lambda entry: (entry.start, -(entry.confidence or 0.0)))
-        # Deduplicate on start time keeping the first (highest confidence).
-        consensus: List[CTMEntry] = []
-        used_starts: set[float] = set()
-        for entry in merged:
-            key = round(entry.start, 3)
-            if key in used_starts:
-                continue
-            used_starts.add(key)
-            consensus.append(entry)
-        LOGGER.debug("Consensus transcript: %s", text_from_ctm(consensus))
-        return consensus
+    consensus_per_chunk: List[List[str]] = []
+    with tempfile.TemporaryDirectory(prefix="rover_") as tmpdir:
+        tmp_path = Path(tmpdir)
+        for index in range(len(chunks)):
+            a = tmp_path / f"canary_{index:05d}.ctm"
+            b = tmp_path / f"parakeet_{index:05d}.ctm"
+            out = tmp_path / f"consensus_{index:05d}.ctm"
+            a.write_text("\n".join(canary_ctms[index]) + "\n", encoding="utf-8")
+            b.write_text("\n".join(parakeet_ctms[index]) + "\n", encoding="utf-8")
+            _run_rover(a, b, out, method=method)
+            consensus_lines = [line for line in out.read_text(encoding="utf-8").splitlines() if line.strip()]
+            consensus_per_chunk.append(consensus_lines)
+    return consensus_per_chunk
 
 
-__all__ = ["RoverCombiner", "RoverNotAvailable"]
+__all__ = ["combine_per_chunk"]

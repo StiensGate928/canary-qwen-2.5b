@@ -1,53 +1,77 @@
-"""Parakeet ASR integration stubs."""
+"""Parakeet ASR integration."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List
+from pathlib import Path
+from typing import List, Tuple
 
-from ..config import PipelineConfig
+try:  # pragma: no cover - exercised when NeMo is installed
+    import nemo.collections.asr as nemo_asr
+    _PARAKEET_IMPORT_ERROR: Exception | None = None
+except Exception as exc:  # pragma: no cover - handled during init
+    nemo_asr = None  # type: ignore
+    _PARAKEET_IMPORT_ERROR = exc
+
 from ..logging import get_logger
 
-LOGGER = get_logger("asr.parakeet")
+log = get_logger("asr.parakeet")
 
 
 @dataclass(slots=True)
-class ParakeetWord:
-    word: str
-    start: float
-    end: float
-    confidence: float = 0.9
-
-
-@dataclass(slots=True)
-class ParakeetChunkResult:
-    chunk_index: int
-    words: List[ParakeetWord]
+class ParakeetConfig:
+    model_id: str = "nvidia/parakeet-rnnt-1.1b"
+    use_gpu: bool = True
 
 
 class ParakeetASR:
-    """Simulated Parakeet inference returning deterministic word timings."""
+    """Wrapper around NeMo Parakeet models providing word times."""
 
-    def __init__(self, config: PipelineConfig) -> None:
-        self._config = config
+    def __init__(self, cfg: ParakeetConfig) -> None:
+        if nemo_asr is None:  # pragma: no cover - integration runtime
+            raise RuntimeError(
+                "NeMo ASR is not available. Install NeMo to use Parakeet."
+            ) from _PARAKEET_IMPORT_ERROR
+        self.cfg = cfg
+        try:
+            log.info("Loading Parakeet model: %s", cfg.model_id)
+            try:
+                self.model = nemo_asr.models.EncDecRNNTBPEModel.from_pretrained(
+                    model_name=cfg.model_id
+                )
+            except Exception:
+                self.model = nemo_asr.models.EncDecTransducerModel.from_pretrained(
+                    model_name=cfg.model_id
+                )
+        except Exception as exc:  # pragma: no cover - depends on runtime env
+            raise RuntimeError(
+                f"Failed to load Parakeet '{cfg.model_id}'. Verify the model id and installation."
+            ) from exc
 
-    def transcribe_chunks(self, chunks: Iterable[tuple[int, float, float]]) -> List[ParakeetChunkResult]:
-        results: List[ParakeetChunkResult] = []
-        for index, start, end in chunks:
-            duration = max(0.01, end - start)
-            word_duration = duration / 3
-            words = [
-                ParakeetWord(word="chunk", start=start, end=start + word_duration, confidence=0.8),
-                ParakeetWord(
-                    word=str(index),
-                    start=start + word_duration,
-                    end=start + 2 * word_duration,
-                    confidence=0.85,
-                ),
-                ParakeetWord(word="transcript", start=start + 2 * word_duration, end=end, confidence=0.9),
-            ]
-            results.append(ParakeetChunkResult(index=index, words=words))
-        return results
+    def transcribe_with_word_times(
+        self, wav: Path
+    ) -> Tuple[str, List[Tuple[str, float, float]]]:
+        """Return (text, [(word, start, end), ...]) for ``wav``."""
+
+        try:
+            hyps = self.model.transcribe(
+                paths2audio_files=[str(wav)], return_hypotheses=True
+            )
+        except Exception as exc:  # pragma: no cover - runtime specific
+            log.warning("Parakeet transcription failed: %s", exc)
+            return "", []
+
+        if not hyps or not hyps[0]:
+            return "", []
+        hyp = hyps[0][0]
+        text = getattr(hyp, "text", "")
+        timestamps: List[Tuple[str, float, float]] = []
+        if hasattr(hyp, "words") and hyp.words:
+            for word in hyp.words:
+                start = float(getattr(word, "start_offset", 0.0))
+                end = float(getattr(word, "end_offset", start))
+                timestamps.append((word.word, start, end))
+        return text, timestamps
 
 
-__all__ = ["ParakeetASR", "ParakeetChunkResult", "ParakeetWord"]
+__all__ = ["ParakeetASR", "ParakeetConfig"]

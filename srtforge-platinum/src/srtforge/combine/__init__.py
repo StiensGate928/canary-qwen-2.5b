@@ -1,5 +1,6 @@
 """System combination utilities."""
 
-from .rover import RoverCombiner, RoverNotAvailable
+from . import rover
+from .rover import combine_per_chunk
 
-__all__ = ["RoverCombiner", "RoverNotAvailable"]
+__all__ = ["combine_per_chunk", "rover"]

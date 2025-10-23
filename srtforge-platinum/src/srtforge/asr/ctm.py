@@ -1,83 +1,39 @@
-"""CTM helpers used by the ROVER combination stage."""
+"""CTM helpers for chunk-level processing."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable, List, Sequence
-
-from .canary_salm import CanaryChunkResult
-from .parakeet import ParakeetChunkResult, ParakeetWord
+from typing import List, Tuple
 
 
-@dataclass(slots=True)
-class CTMEntry:
-    """Represents a single CTM word entry."""
+def ctm_from_uniform_words(words: List[str], chunk_start: float, chunk_end: float, utt_id: str) -> List[str]:
+    """Generate a CTM by uniformly distributing ``words`` across the chunk."""
 
-    speaker: str
-    start: float
-    duration: float
-    word: str
-    confidence: float | None = None
-
-
-def _safe_duration(start: float, end: float) -> float:
-    duration = max(0.0, end - start)
-    return duration
-
-
-def from_parakeet(chunk: ParakeetChunkResult, speaker: str = "P") -> List[CTMEntry]:
-    entries: List[CTMEntry] = []
-    for word in chunk.words:
+    duration = max(0.0, chunk_end - chunk_start)
+    count = max(1, len(words))
+    step = duration / count if count else duration
+    entries: List[str] = []
+    for index, word in enumerate(words):
+        start = chunk_start + index * step
         entries.append(
-            CTMEntry(
-                speaker=speaker,
-                start=word.start,
-                duration=_safe_duration(word.start, word.end),
-                word=word.word,
-                confidence=word.confidence,
-            )
+            f"{utt_id} 1 {start:.3f} {step:.3f} {word} 1.00"
         )
     return entries
 
 
-def from_uniform_text(chunk: CanaryChunkResult, speaker: str = "C") -> List[CTMEntry]:
-    words = [w for w in chunk.text.strip().split() if w]
-    if not words:
-        return []
-    duration = _safe_duration(chunk.start, chunk.end)
-    per_word = duration / len(words)
-    entries: List[CTMEntry] = []
-    cursor = chunk.start
-    for word in words:
+def ctm_from_word_times(
+    words_ts: List[Tuple[str, float, float]],
+    chunk_offset: float,
+    utt_id: str,
+) -> List[str]:
+    """Convert model-provided word timestamps to CTM entries."""
+
+    entries: List[str] = []
+    for word, start, end in words_ts:
+        duration = max(0.0, end - start)
         entries.append(
-            CTMEntry(
-                speaker=speaker,
-                start=cursor,
-                duration=per_word,
-                word=word,
-                confidence=None,
-            )
+            f"{utt_id} 1 {start + chunk_offset:.3f} {duration:.3f} {word} 1.00"
         )
-        cursor += per_word
     return entries
 
 
-def merge_chunk_ctms(ctms: Sequence[Iterable[CTMEntry]]) -> List[CTMEntry]:
-    merged: List[CTMEntry] = []
-    for entries in ctms:
-        merged.extend(entries)
-    merged.sort(key=lambda entry: entry.start)
-    return merged
-
-
-def text_from_ctm(entries: Iterable[CTMEntry]) -> str:
-    return " ".join(entry.word for entry in entries)
-
-
-__all__ = [
-    "CTMEntry",
-    "from_parakeet",
-    "from_uniform_text",
-    "merge_chunk_ctms",
-    "text_from_ctm",
-]
+__all__ = ["ctm_from_uniform_words", "ctm_from_word_times"]
