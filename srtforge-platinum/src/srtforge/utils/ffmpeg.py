@@ -6,7 +6,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Optional, Sequence
 
 from . import text
 from ..logging import get_logger
@@ -92,6 +92,71 @@ def _probe_audio_stream(path: Path, stream_index: int = 0) -> dict:
     return streams[0]
 
 
+def _probe_audio_streams(path: Path) -> Sequence[dict]:
+    """Return metadata for all audio streams in ``path``."""
+
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "a",
+        "-show_streams",
+        "-print_format",
+        "json",
+        str(path),
+    ]
+    out = subprocess.run(cmd, check=True, text=True, capture_output=True).stdout
+    data = json.loads(out or "{}")
+    streams = data.get("streams") or []
+    return streams
+
+
+def _normalise_language_tag(value: str) -> set[str]:
+    token = value.strip().lower()
+    forms = {token}
+    if len(token) >= 2:
+        forms.add(token[:2])
+    if len(token) >= 3:
+        forms.add(token[:3])
+    return {form for form in forms if form}
+
+
+def select_audio_stream(path: Path, language: Optional[str] = None) -> int:
+    """Choose the most appropriate audio stream index for ``language``."""
+
+    streams = list(_probe_audio_streams(path))
+    if not streams:
+        return 0
+
+    default_index = 0
+    for idx, stream in enumerate(streams):
+        disposition = stream.get("disposition") or {}
+        if disposition.get("default"):
+            default_index = idx
+            break
+
+    if not language:
+        return default_index
+
+    desired = _normalise_language_tag(language)
+    for idx, stream in enumerate(streams):
+        tags = stream.get("tags") or {}
+        candidates = [
+            tags.get("language"),
+            tags.get("LANGUAGE"),
+            tags.get("lang"),
+            tags.get("LANG"),
+        ]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            if desired & _normalise_language_tag(candidate):
+                return idx
+
+    return default_index
+
+
 def probe_audio_duration(path: Path) -> float:
     """Return the duration (seconds) of ``path`` using ffprobe."""
 
@@ -117,6 +182,8 @@ def extract_dialog_source(
     out_wav: Path,
     stream_index: int = 0,
     prefer_center: bool = True,
+    *,
+    collapse_to_mono: bool = True,
 ) -> None:
     """Extract audio preferring the center channel when available."""
 
@@ -125,8 +192,12 @@ def extract_dialog_source(
     layout = (info.get("channel_layout") or info.get("ch_layout") or "").lower()
     has_fc = any(token in layout for token in {"5.1", "6.1", "7.1", "fc"}) or layout == "c"
     if prefer_center and channels >= 3 and has_fc:
-        af = "pan=mono|c0=FC,aresample=44100:resampler=soxr:precision=28"
-        ac = "1"
+        if collapse_to_mono:
+            af = "pan=mono|c0=FC,aresample=44100:resampler=soxr:precision=28"
+            ac = "1"
+        else:
+            af = "pan=stereo|c0=FC|c1=FC,aresample=44100:resampler=soxr:precision=28"
+            ac = "2"
     else:
         af = "aresample=44100:resampler=soxr:precision=28"
         ac = "2"
@@ -137,7 +208,7 @@ def extract_dialog_source(
         "-i",
         str(input_video),
         "-map",
-        f"0:{stream_index}",
+        f"0:a:{stream_index}",
         "-ac",
         ac,
         "-af",
@@ -182,6 +253,7 @@ __all__ = [
     "run_command",
     "run_ffmpeg",
     "extract_dialog_source",
+    "select_audio_stream",
     "probe_audio_duration",
     "probe_audio_channels",
     "run_silencedetect",

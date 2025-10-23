@@ -192,7 +192,14 @@ class SubtitlePipeline:
         LOGGER.info("Processing %s", video_path)
         temp_dir = self._config.paths.temp_dir
         temp_dir.mkdir(parents=True, exist_ok=True)
-        extracted = self._audio_extractor.extract(video_path, temp_dir, language=self._language)
+        sep_cfg = self._config.separation
+        collapse_to_mono = not (sep_cfg.backend and sep_cfg.backend != "none")
+        extracted = self._audio_extractor.extract(
+            video_path,
+            temp_dir,
+            language=self._language,
+            collapse_to_mono=collapse_to_mono,
+        )
 
         separated_source = self._maybe_separate(extracted, temp_dir, video_path)
 
