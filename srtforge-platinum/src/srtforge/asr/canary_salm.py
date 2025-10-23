@@ -3,66 +3,127 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Optional
+from pathlib import Path
+from typing import List
 
-from ..config import PipelineConfig
+try:  # pragma: no cover - import guard for environments without torch
+    import torch
+except Exception:  # pragma: no cover - fallback for CPU-only test envs
+    torch = None  # type: ignore
+
+try:  # pragma: no cover - exercised via runtime patching in tests
+    from nemo.collections.speechlm2.models import SALM  # type: ignore
+    _SALM_IMPORT_ERROR: Exception | None = None
+except Exception as exc:  # pragma: no cover - handled in __init__
+    SALM = None  # type: ignore
+    _SALM_IMPORT_ERROR = exc
+
 from ..logging import get_logger
-from ..utils import text
 
-LOGGER = get_logger("asr.canary")
+log = get_logger("asr.canary")
 
 
 @dataclass(slots=True)
-class CanaryChunkResult:
-    """Represents the text emitted by the SALM for a chunk."""
-
-    chunk_index: int
-    start: float
-    end: float
-    text: str
+class SALMConfig:
+    model_id: str = "nvidia/canary-qwen-2.5b"
+    max_total_tokens: int = 1024
+    max_new_tokens: int = 256
+    carry_sentences: int = 2
+    max_prompt_tokens: int = 256
+    greedy: bool = True
 
 
 class CanarySALM:
-    """Thin wrapper around NeMo's SALM interface.
+    """Thin wrapper around NeMo SALM with token-budgeted prompts."""
 
-    The project does not ship the heavy NeMo dependency in tests, but the
-    wrapper exposes the intended interface and logs the expected behaviour.
-    """
+    def __init__(self, cfg: SALMConfig) -> None:
+        if SALM is None:  # pragma: no cover - exercised in integration flows
+            raise RuntimeError(
+                "NeMo SALM is not available. Ensure NeMo is installed."
+            ) from _SALM_IMPORT_ERROR
+        self.cfg = cfg
+        try:
+            log.info("Loading SALM model: %s", cfg.model_id)
+            self.model = SALM.from_pretrained(cfg.model_id)  # type: ignore[arg-type]
+            self.tokenizer = self.model.tokenizer
+            self.audio_tag = self.model.audio_locator_tag
+        except Exception as exc:  # pragma: no cover - depends on runtime env
+            raise RuntimeError(
+                f"Failed to load SALM '{cfg.model_id}'. Ensure NeMo and checkpoints are available."
+            ) from exc
 
-    def __init__(self, config: PipelineConfig, keywords: Optional[List[str]] = None) -> None:
-        self._config = config
-        self._keywords = keywords or []
-        self._context_buffer: List[str] = []
+    # --- prompt helpers -------------------------------------------------
+    def _token_len(self, text: str) -> int:
+        ids = self.tokenizer.text_to_ids(text)
+        return len(ids)
 
-    def _build_prompt(self) -> str:
-        if not self._context_buffer:
+    def _truncate_by_tokens(self, text: str, budget: int) -> str:
+        if budget <= 0:
             return ""
-        context = " ".join(self._context_buffer)[-self._config.salm_context.max_context_chars :]
-        return context
+        if self._token_len(text) <= budget:
+            return text
+        lo, hi = 0, len(text)
+        best = ""
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            snippet = text[-mid:]
+            if self._token_len(snippet) <= budget:
+                best = snippet
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return best
 
-    def transcribe_chunks(
-        self,
-        chunks: Iterable[tuple[int, float, float]],
-    ) -> List[CanaryChunkResult]:
-        """Simulate SALM transcription for each chunk.
+    def build_prompt(self, recent_sentences: List[str], keywords: List[str]) -> str:
+        context = " ".join(recent_sentences).strip()
+        keyword_line = ", ".join(keywords[:50]) if keywords else ""
+        base = ""
+        if context:
+            base += f"Context: {context}\n"
+        if keyword_line:
+            base += f"Keywords: {keyword_line}\n"
+        instruction = f"Transcribe the following: {self.audio_tag}"
+        instruction_tokens = self._token_len(instruction)
+        budget = max(0, self.cfg.max_prompt_tokens - instruction_tokens)
+        base = self._truncate_by_tokens(base, budget)
+        return f"{base}{instruction}"
 
-        In a production deployment this method would load the NeMo model and
-        decode audio tensors. The reference implementation returns placeholder
-        text that preserves the structure for downstream components.
-        """
-        results: List[CanaryChunkResult] = []
-        for index, start, end in chunks:
-            prompt = self._build_prompt()
-            LOGGER.debug("SALM prompt for chunk %s: %s", index, prompt)
-            dummy_text = f"Chunk {index} transcript"
-            if self._keywords:
-                dummy_text += " (" + ", ".join(self._keywords[:3]) + ")"
-            results.append(CanaryChunkResult(index, start, end, dummy_text))
-            sentences = text.split_sentences(dummy_text)
-            if sentences:
-                carry = sentences[-self._config.salm_context.carry_sentences :]
-                self._context_buffer = carry
-        return results
+    # --- inference ------------------------------------------------------
+    def transcribe_chunk(self, wav_path: Path, prompt: str) -> str:
+        prompts = [[{"role": "user", "content": prompt, "audio": [str(wav_path)]}]]
+        prompt_tokens = self._token_len(prompt)
+        max_new = min(
+            self.cfg.max_new_tokens,
+            max(0, self.cfg.max_total_tokens - prompt_tokens - 8),
+        )
+        if max_new < 16:
+            log.warning("Prompt exceeds token budget; truncating aggressively.")
+            prompt = self._truncate_by_tokens(
+                prompt, max(32, self.cfg.max_total_tokens - 64)
+            )
+            prompt_tokens = self._token_len(prompt)
+            max_new = min(
+                self.cfg.max_new_tokens,
+                max(0, self.cfg.max_total_tokens - prompt_tokens - 8),
+            )
+
+        gen_kwargs = {"prompts": prompts}
+        if max_new > 0:
+            gen_kwargs["max_new_tokens"] = max_new
+        try:
+            ids = self.model.generate(**gen_kwargs)
+        except TypeError:  # pragma: no cover - older NeMo signatures
+            ids = self.model.generate(prompts=prompts)
+
+        tokens = ids
+        if torch is not None and isinstance(tokens, torch.Tensor):
+            tokens = tokens.cpu()
+        if isinstance(tokens, (list, tuple)):
+            tokens = tokens[0]
+            if torch is not None and isinstance(tokens, torch.Tensor):
+                tokens = tokens.cpu()
+        text = self.tokenizer.ids_to_text(tokens).strip()
+        return text
 
 
-__all__ = ["CanaryChunkResult", "CanarySALM"]
+__all__ = ["CanarySALM", "SALMConfig"]

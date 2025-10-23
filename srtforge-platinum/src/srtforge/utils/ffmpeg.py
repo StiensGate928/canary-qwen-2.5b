@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List
 
 from . import text
 from ..logging import get_logger
@@ -69,51 +70,72 @@ def run_ffmpeg(arguments: Iterable[str], ffmpeg_binary: str = "ffmpeg") -> subpr
     return run_command(command, check=True)
 
 
-def extract_audio(
-    source: Path,
-    target: Path,
-    prefer_center: bool = True,
-    language: Optional[str] = None,
-    ffmpeg_binary: str = "ffmpeg",
-) -> Path:
-    """Generate an FFmpeg command to extract the preferred audio stream.
+def _probe_audio_stream(path: Path, stream_index: int = 0) -> dict:
+    """Return metadata for a specific audio stream using ``ffprobe``."""
 
-    The function does not run the command automatically; instead it returns the
-    expected output path so that the caller can decide whether to execute the
-    command. This keeps the helper side-effect free for easier unit testing.
-    """
-    require_binary(ffmpeg_binary)
-    target.parent.mkdir(parents=True, exist_ok=True)
-
-    # Basic command template - this mirrors the documented extraction pipeline.
-    command: List[str] = [
-        ffmpeg_binary,
-        "-y",
-        "-i",
-        str(source),
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        f"a:{stream_index}",
+        "-show_streams",
+        "-print_format",
+        "json",
+        str(path),
     ]
+    out = subprocess.run(cmd, check=True, text=True, capture_output=True).stdout
+    data = json.loads(out or "{}")
+    streams = data.get("streams") or [{}]
+    return streams[0]
 
-    if language:
-        command.extend(["-map", f"0:a:m:language:{language}?" ])
 
-    if prefer_center:
-        command.extend(["-filter_complex", "[0:a]pan=mono|c0=FC[aout]", "-map", "[aout]"])
+def probe_audio_duration(path: Path) -> float:
+    """Return the duration (seconds) of ``path`` using ffprobe."""
+
+    info = _probe_audio_stream(path)
+    try:
+        return float(info.get("duration", 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def extract_dialog_source(
+    input_video: Path,
+    out_wav: Path,
+    stream_index: int = 0,
+    prefer_center: bool = True,
+) -> None:
+    """Extract audio preferring the center channel when available."""
+
+    info = _probe_audio_stream(input_video, stream_index)
+    channels = int(info.get("channels", 0) or 0)
+    layout = (info.get("channel_layout") or info.get("ch_layout") or "").lower()
+    has_fc = any(token in layout for token in {"5.1", "6.1", "7.1", "fc"}) or layout == "c"
+    if prefer_center and channels >= 3 and has_fc:
+        af = "pan=mono|c0=FC,aresample=44100:resampler=soxr:precision=28"
+        ac = "1"
     else:
-        command.extend(["-ac", "2"])
-
-    command.extend([
+        af = "aresample=44100:resampler=soxr:precision=28"
+        ac = "2"
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-i",
+        str(input_video),
+        "-map",
+        f"0:{stream_index}",
+        "-ac",
+        ac,
+        "-af",
+        af,
         "-c:a",
-        "pcm_s16le",
-        "-ar",
-        "48000",
-        str(target),
-    ])
-
-    LOGGER.debug("Prepared FFmpeg extraction command: %s", " ".join(command))
-    # We do not execute FFmpeg in library code; the CLI handles invocation.
-    if not target.exists():
-        target.touch()
-    return target
+        "pcm_f32le",
+        "-vn",
+        str(out_wav),
+    ]
+    subprocess.run(cmd, check=True)
 
 
 __all__ = [
@@ -122,6 +144,7 @@ __all__ = [
     "have_binary",
     "run_command",
     "run_ffmpeg",
-    "extract_audio",
+    "extract_dialog_source",
+    "probe_audio_duration",
     "FFmpegError",
 ]

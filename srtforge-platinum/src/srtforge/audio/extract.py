@@ -22,13 +22,12 @@ class AudioExtractor:
     def extract(self, source: Path, temp_dir: Path, language: Optional[str] = None) -> Path:
         """Prepare the extraction command and create an empty target placeholder."""
         target = temp_dir / f"{source.stem}_extracted.wav"
-        LOGGER.info("Preparing audio extraction for %s", source)
-        ffmpeg.extract_audio(
+        LOGGER.info("Extracting audio for %s", source)
+        ffmpeg.extract_dialog_source(
             source,
             target,
+            stream_index=0,
             prefer_center=self._config.prefer_center,
-            language=language,
-            ffmpeg_binary=self._ffmpeg_binary,
         )
         return target
 

@@ -1,14 +1,13 @@
 """ASR model interfaces."""
 
-from .canary_salm import CanaryChunkResult, CanarySALM
-from .parakeet import ParakeetASR, ParakeetChunkResult, ParakeetWord
 from . import ctm
+from .canary_salm import CanarySALM, SALMConfig
+from .parakeet import ParakeetASR, ParakeetConfig
 
 __all__ = [
     "CanarySALM",
-    "CanaryChunkResult",
+    "SALMConfig",
     "ParakeetASR",
-    "ParakeetChunkResult",
-    "ParakeetWord",
+    "ParakeetConfig",
     "ctm",
 ]

@@ -58,17 +58,24 @@ class ChunkConfig:
 
 
 @dataclass(slots=True)
-class SalmConfig:
-    model_id: str = "nvidia/canary-qwen-2.5b"
+class ModelsConfig:
+    salm_id: str = "nvidia/canary-qwen-2.5b"
+    parakeet_id: str = "nvidia/parakeet-rnnt-1.1b"
+
+
+@dataclass(slots=True)
+class SalmContextConfig:
     carry_sentences: int = 2
-    max_context_chars: int = 220
+    max_prompt_tokens: int = 256
+    max_total_tokens: int = 1024
+    max_new_tokens: int = 256
     keywords_file: Optional[pathlib.Path] = None
 
 
 @dataclass(slots=True)
 class ParakeetConfig:
-    model_id: str = "nvidia/parakeet-rnnt-1.1b"
     enabled: bool = True
+    use_gpu: bool = True
 
 
 @dataclass(slots=True)
@@ -80,8 +87,8 @@ class CombinationConfig:
 @dataclass(slots=True)
 class AlignmentConfig:
     use_mfa: bool = False
-    mfa_dict: Optional[pathlib.Path] = None
-    mfa_acoustic: Optional[pathlib.Path] = None
+    acoustic_model: str = "english_mfa"
+    dict_path: Optional[pathlib.Path] = None
 
 
 @dataclass(slots=True)
@@ -98,19 +105,14 @@ class PathsConfig:
 
 
 @dataclass(slots=True)
-class ModelConfig:
-    salm: SalmConfig = field(default_factory=SalmConfig)
-    parakeet: ParakeetConfig = field(default_factory=ParakeetConfig)
-
-
-@dataclass(slots=True)
 class PipelineConfig:
     paths: PathsConfig = field(default_factory=PathsConfig)
     frontend: FrontendConfig = field(default_factory=FrontendConfig)
     separation: SeparationConfig = field(default_factory=SeparationConfig)
     vad: VadConfig = field(default_factory=VadConfig)
     chunking: ChunkConfig = field(default_factory=ChunkConfig)
-    salm_context: SalmConfig = field(default_factory=SalmConfig)
+    models: ModelsConfig = field(default_factory=ModelsConfig)
+    salm_context: SalmContextConfig = field(default_factory=SalmContextConfig)
     parakeet: ParakeetConfig = field(default_factory=ParakeetConfig)
     combination: CombinationConfig = field(default_factory=CombinationConfig)
     alignment: AlignmentConfig = field(default_factory=AlignmentConfig)

@@ -31,4 +31,15 @@ def split_sentences(text: str) -> List[str]:
     return [part.strip() for part in parts if part.strip()]
 
 
-__all__ = ["redact_command", "normalize_whitespace", "split_sentences"]
+def update_carry_sentences(current: List[str], latest: str, k: int) -> List[str]:
+    """Return the most recent ``k`` sentences given new text output."""
+
+    if k <= 0:
+        return []
+    sentences = current + split_sentences(latest)
+    if len(sentences) <= k:
+        return sentences
+    return sentences[-k:]
+
+
+__all__ = ["redact_command", "normalize_whitespace", "split_sentences", "update_carry_sentences"]

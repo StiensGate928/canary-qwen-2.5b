@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import argparse
-import sys
+import subprocess as sp
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import List, Sequence, Tuple
 
-from .align import mfa
-from .asr import ctm
-from .asr.canary_salm import CanarySALM
-from .asr.parakeet import ParakeetASR
-from .combine.rover import RoverCombiner
+from .align.mfa import align_chunks_with_mfa
+from .asr.canary_salm import CanarySALM, SALMConfig
+from .asr.ctm import ctm_from_uniform_words, ctm_from_word_times
+from .asr.parakeet import ParakeetASR, ParakeetConfig
+from .audio.extract import AudioExtractor
+from .audio.preprocess import preprocess_and_resample_16k
+from .combine.rover import combine_per_chunk
 from .config import (
     PipelineConfig,
     apply_overrides,
@@ -22,9 +24,10 @@ from .config import (
 from .logging import configure_logging, get_logger
 from .segment.chunker import Chunk, Chunker
 from .srt.writer import SRTWriter, SubtitleSegment
+from .utils import ffmpeg
+from .utils.text import update_carry_sentences
 
 LOGGER = get_logger("cli")
-
 
 SUPPORTED_EXTENSIONS = {".mp4", ".mkv", ".wav", ".flac", ".m4a"}
 
@@ -51,86 +54,206 @@ class SubtitlePipeline:
         self._enable_mfa = enable_mfa
         self._embed = embed_subtitles
         self._language = language
+        self._audio_extractor = AudioExtractor(config.frontend)
 
+    # ------------------------------------------------------------------
     def _collect_media(self, source: Path, recursive: bool) -> List[Path]:
         if source.is_file():
             return [source]
         pattern = "**/*" if recursive else "*"
         return [p for p in source.glob(pattern) if p.suffix.lower() in SUPPORTED_EXTENSIONS]
 
-    def _plan_chunks(self) -> List[Chunk]:
+    def _plan_chunks(self, duration: float) -> List[Chunk]:
         chunker = Chunker(
             max_len=self._config.chunking.max_len,
             overlap=self._config.chunking.overlap,
         )
-        dummy_span = [(0.0, self._config.chunking.max_len)]
-        return chunker.chunk_from_pairs(dummy_span)
+        spans: List[Tuple[float, float]] = [(0.0, duration)]
+        return chunker.chunk_from_pairs(spans)
 
-    def _simulate_alignment(self, transcript: List[str]) -> List[str]:
-        if not self._enable_mfa:
-            return transcript
-        return mfa.align_segments(
-            audio_path=self._config.paths.temp_dir / "dummy.wav",
-            transcript_lines=transcript,
-            dictionary_path=self._config.alignment.mfa_dict,
-            acoustic_model=self._config.alignment.mfa_acoustic,
-        )
+    def _cut_chunk(self, source: Path, start: float, end: float, target: Path) -> None:
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-i",
+            str(source),
+            "-ss",
+            f"{start:.3f}",
+            "-to",
+            f"{end:.3f}",
+            "-ac",
+            "1",
+            "-c:a",
+            "pcm_f32le",
+            str(target),
+        ]
+        sp.run(cmd, check=True)
 
     def _maybe_embed(self, video_path: Path, srt_path: Path) -> None:
         if not self._embed:
             return
-        LOGGER.info("Embedding subtitles into %s (simulated)", video_path)
+        LOGGER.info("Embedding subtitles into %s (not implemented)", video_path)
+
+    def _load_salm(self) -> CanarySALM:
+        cfg = SALMConfig(
+            model_id=self._config.models.salm_id,
+            max_total_tokens=self._config.salm_context.max_total_tokens,
+            max_new_tokens=self._config.salm_context.max_new_tokens,
+            carry_sentences=self._config.salm_context.carry_sentences,
+            max_prompt_tokens=self._config.salm_context.max_prompt_tokens,
+        )
+        model = CanarySALM(cfg)
+        if self._use_cpu and hasattr(model.model, "to"):
+            model.model.to("cpu")
+        return model
+
+    def _load_parakeet(self) -> ParakeetASR | None:
+        if not self._enable_parakeet:
+            return None
+        cfg = ParakeetConfig(
+            model_id=self._config.models.parakeet_id,
+            use_gpu=self._config.parakeet.use_gpu and not self._use_cpu,
+        )
+        try:
+            model = ParakeetASR(cfg)
+        except RuntimeError as exc:
+            LOGGER.warning("Parakeet unavailable: %s", exc)
+            return None
+        if self._use_cpu and hasattr(model.model, "to"):
+            model.model.to("cpu")
+        return model
 
     def _transcribe(self, video_path: Path) -> Path:
         LOGGER.info("Processing %s", video_path)
-        chunks = self._plan_chunks()
-        canary = CanarySALM(self._config, keywords=self._keywords)
-        canary_results = canary.transcribe_chunks(
-            (index, chunk.start, chunk.end) for index, chunk in enumerate(chunks)
+        temp_dir = self._config.paths.temp_dir
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        extracted = self._audio_extractor.extract(video_path, temp_dir, language=self._language)
+        cleaned = temp_dir / f"{video_path.stem}_clean.wav"
+        preprocess_and_resample_16k(
+            extracted,
+            cleaned,
+            arnndn_model=self._config.frontend.arnndn_model,
+            afftdn_nf=self._config.frontend.afftdn_nf,
         )
+        duration = ffmpeg.probe_audio_duration(cleaned)
+        chunks = self._plan_chunks(duration or self._config.chunking.max_len)
 
-        parakeet_results: List[ctm.CTMEntry] | None = None
-        if self._enable_parakeet:
-            parakeet = ParakeetASR(self._config)
-            parakeet_chunks = parakeet.transcribe_chunks(
-                (index, chunk.start, chunk.end) for index, chunk in enumerate(chunks)
-            )
-            parakeet_entries: List[List[ctm.CTMEntry]] = [
-                ctm.from_parakeet(chunk) for chunk in parakeet_chunks
-            ]
-            parakeet_results = ctm.merge_chunk_ctms(parakeet_entries)
+        salm = self._load_salm()
+        parakeet = self._load_parakeet()
 
-        canary_entries = ctm.merge_chunk_ctms([
-            ctm.from_uniform_text(result) for result in canary_results
-        ])
+        keywords = self._keywords
+        carry: List[str] = []
+        chunk_paths: List[Path] = []
+        canary_texts: List[str] = []
+        parakeet_texts: List[str] = []
+        parakeet_wts: List[List[Tuple[str, float, float]]] = []
+        chunk_ranges: List[Tuple[float, float]] = []
 
-        consensus_entries = canary_entries
-        if self._enable_rover and parakeet_results is not None:
-            rover = RoverCombiner()
+        for index, chunk in enumerate(chunks):
+            chunk_path = temp_dir / f"{video_path.stem}_chunk_{index:05d}.wav"
+            self._cut_chunk(cleaned, chunk.start, chunk.end, chunk_path)
+            chunk_paths.append(chunk_path)
+            chunk_ranges.append((chunk.start, chunk.end))
+            prompt = salm.build_prompt(carry, keywords)
             try:
-                rover.assert_available()
-            except Exception:
-                LOGGER.warning("ROVER binary not found, falling back to Canary-only transcript")
-            else:
-                consensus_entries = rover.combine([canary_entries, parakeet_results])
-
-        transcript_lines = self._simulate_alignment([entry.word for entry in consensus_entries])
-
-        srt_segments = [
-            SubtitleSegment(
-                index=i + 1,
-                start=entry.start,
-                end=entry.start + entry.duration,
-                text=line,
+                text = salm.transcribe_chunk(chunk_path, prompt)
+            except RuntimeError as exc:
+                if "cuda out of memory" in str(exc).lower() and chunk.duration > 24.0:
+                    shrink_end = chunk.start + chunk.duration * 0.8
+                    LOGGER.warning(
+                        "CUDA OOM on chunk %s; retrying with shorter window %.2fs",
+                        index,
+                        shrink_end - chunk.start,
+                    )
+                    self._cut_chunk(cleaned, chunk.start, shrink_end, chunk_path)
+                    chunks[index] = Chunk(chunk.start, shrink_end)
+                    chunk_ranges[-1] = (chunk.start, shrink_end)
+                    prompt = salm.build_prompt(carry, keywords)
+                    text = salm.transcribe_chunk(chunk_path, prompt)
+                else:
+                    raise
+            canary_texts.append(text)
+            carry = update_carry_sentences(
+                carry,
+                text,
+                self._config.salm_context.carry_sentences,
             )
-            for i, (entry, line) in enumerate(zip(consensus_entries, transcript_lines))
-        ]
+
+            if parakeet:
+                transcript, word_times = parakeet.transcribe_with_word_times(chunk_path)
+                parakeet_texts.append(transcript)
+                parakeet_wts.append(word_times)
+
+        mfa_word_times: List[List[Tuple[str, float, float]]] = []
+        if self._enable_mfa and self._config.alignment.dict_path:
+            payload = [
+                (chunk.start, chunk.end, path, text)
+                for chunk, path, text in zip(chunks, chunk_paths, canary_texts)
+            ]
+            try:
+                mfa_word_times = align_chunks_with_mfa(
+                    payload,
+                    self._config.alignment.acoustic_model,
+                    self._config.alignment.dict_path,
+                )
+            except Exception as exc:
+                LOGGER.warning("MFA failed, falling back to uniform CTM: %s", exc)
+                mfa_word_times = []
+        elif self._enable_mfa:
+            LOGGER.warning("MFA enabled but dictionary path missing; skipping alignment")
+
+        canary_ctms: List[List[str]] = []
+        parakeet_ctms: List[List[str]] = []
+        for idx, chunk in enumerate(chunks):
+            utt_id = f"utt_{idx:05d}"
+            chunk_duration = chunk.duration
+            words = canary_texts[idx].split()
+            if mfa_word_times and idx < len(mfa_word_times) and mfa_word_times[idx]:
+                canary_ctm = ctm_from_word_times(mfa_word_times[idx], 0.0, utt_id)
+            else:
+                canary_ctm = ctm_from_uniform_words(words, 0.0, chunk_duration, utt_id)
+            canary_ctms.append(canary_ctm)
+            if parakeet:
+                wt = parakeet_wts[idx] if idx < len(parakeet_wts) else []
+                if wt:
+                    parakeet_ctm = ctm_from_word_times(wt, 0.0, utt_id)
+                else:
+                    parakeet_ctm = ctm_from_uniform_words(
+                        parakeet_texts[idx].split(),
+                        0.0,
+                        chunk_duration,
+                        utt_id,
+                    )
+                parakeet_ctms.append(parakeet_ctm)
+
+        final_texts = list(canary_texts)
+        if parakeet and self._enable_rover and parakeet_ctms:
+            consensus_chunks = combine_per_chunk(
+                chunk_ranges,
+                canary_ctms,
+                parakeet_ctms,
+                method=self._config.combination.method,
+            )
+            final_texts = [
+                " ".join(line.split()[4] for line in chunk_ctm)
+                for chunk_ctm in consensus_chunks
+            ]
 
         writer = SRTWriter(self._config.reading)
         output_dir = self._config.paths.output_dir
         output_dir.mkdir(parents=True, exist_ok=True)
         target = output_dir / f"{video_path.stem}.srt"
-        writer.write(srt_segments, target)
+        segments = [
+            SubtitleSegment(
+                index=i + 1,
+                start=chunk.start,
+                end=chunk.end,
+                text=final_texts[i].strip() if i < len(final_texts) else "",
+            )
+            for i, chunk in enumerate(chunks)
+        ]
+        writer.write(segments, target)
         self._maybe_embed(video_path, target)
         return target
 
@@ -138,8 +261,7 @@ class SubtitlePipeline:
         files = self._collect_media(source, recursive)
         if not files:
             raise FileNotFoundError("No media files found to process")
-        outputs = [self._transcribe(file) for file in files]
-        return outputs
+        return [self._transcribe(file) for file in files]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -160,26 +282,10 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["none", "fv4", "bandit"],
         help="Voice isolation backend. Overrides config.separation.backend",
     )
-    transcribe.add_argument(
-        "--sep-repo",
-        type=Path,
-        help="Path to separation repo (fv4/bandit)",
-    )
-    transcribe.add_argument(
-        "--sep-ckpt",
-        type=Path,
-        help="Separation checkpoint (.ckpt)",
-    )
-    transcribe.add_argument(
-        "--sep-cfg",
-        type=Path,
-        help="Separation config (.yaml)",
-    )
-    transcribe.add_argument(
-        "--bandit-model-name",
-        type=str,
-        help="Bandit model_name for inference.py (e.g., 'BandIt Vocals V7')",
-    )
+    transcribe.add_argument("--sep-repo", type=Path)
+    transcribe.add_argument("--sep-ckpt", type=Path)
+    transcribe.add_argument("--sep-cfg", type=Path)
+    transcribe.add_argument("--bandit-model-name", type=str)
     transcribe.add_argument("--keywords", type=Path, default=None)
     transcribe.add_argument("--cpu", action="store_true")
     transcribe.add_argument("--with-parakeet", action="store_true")
