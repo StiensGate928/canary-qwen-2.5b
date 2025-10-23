@@ -13,6 +13,7 @@ from .asr.ctm import ctm_from_uniform_words, ctm_from_word_times
 from .asr.parakeet import ParakeetASR, ParakeetConfig
 from .audio.extract import AudioExtractor
 from .audio.preprocess import preprocess_and_resample_16k
+from .audio.separate import separate_dialogue
 from .combine.rover import combine_per_chunk
 from .config import (
     PipelineConfig,
@@ -129,9 +130,30 @@ class SubtitlePipeline:
         temp_dir = self._config.paths.temp_dir
         temp_dir.mkdir(parents=True, exist_ok=True)
         extracted = self._audio_extractor.extract(video_path, temp_dir, language=self._language)
+
+        separated_source = extracted
+        sep_cfg = self._config.separation
+        if sep_cfg.backend and sep_cfg.backend != "none":
+            separated = temp_dir / f"{video_path.stem}_separated.wav"
+            separated_source = separate_dialogue(
+                extracted,
+                separated,
+                sep_cfg.backend,
+                sr_frontend_hz=sep_cfg.sr_frontend_hz,
+                prefer_center_first=sep_cfg.prefer_center,
+                fv4_repo_dir=getattr(sep_cfg.fv4, "repo_dir", None),
+                fv4_cfg=getattr(sep_cfg.fv4, "cfg", None),
+                fv4_ckpt=getattr(sep_cfg.fv4, "ckpt", None),
+                fv4_num_overlap=getattr(sep_cfg.fv4, "num_overlap", 6),
+                bandit_repo_dir=getattr(sep_cfg.bandit, "repo_dir", None),
+                bandit_ckpt=getattr(sep_cfg.bandit, "ckpt", None),
+                bandit_cfg=getattr(sep_cfg.bandit, "cfg", None),
+                bandit_model_name=getattr(sep_cfg.bandit, "model_name", None),
+            )
+
         cleaned = temp_dir / f"{video_path.stem}_clean.wav"
         preprocess_and_resample_16k(
-            extracted,
+            separated_source,
             cleaned,
             arnndn_model=self._config.frontend.arnndn_model,
             afftdn_nf=self._config.frontend.afftdn_nf,
@@ -288,11 +310,13 @@ def build_parser() -> argparse.ArgumentParser:
     transcribe.add_argument("--bandit-model-name", type=str)
     transcribe.add_argument("--keywords", type=Path, default=None)
     transcribe.add_argument("--cpu", action="store_true")
+    transcribe.add_argument("--max-chunk", type=float, dest="max_chunk")
+    transcribe.add_argument("--overlap", type=float, dest="chunk_overlap")
     transcribe.add_argument("--with-parakeet", action="store_true")
     transcribe.add_argument("--with-rover", action="store_true")
     transcribe.add_argument("--with-mfa", action="store_true")
-    transcribe.add_argument("--verbose", action="store_true")
-    transcribe.add_argument("--quiet", action="store_true")
+    transcribe.add_argument("-v", "--verbose", action="store_true")
+    transcribe.add_argument("-q", "--quiet", action="store_true")
     return parser
 
 
@@ -321,6 +345,10 @@ def _apply_cli_overrides(config: PipelineConfig, args: argparse.Namespace) -> Pi
             overrides.setdefault("separation", {}).setdefault("bandit", {})["cfg"] = args.sep_cfg
     if args.bandit_model_name:
         overrides.setdefault("separation", {}).setdefault("bandit", {})["model_name"] = args.bandit_model_name
+    if args.max_chunk is not None:
+        overrides.setdefault("chunking", {})["max_len"] = float(args.max_chunk)
+    if args.chunk_overlap is not None:
+        overrides.setdefault("chunking", {})["overlap"] = float(args.chunk_overlap)
     if args.with_parakeet:
         overrides.setdefault("parakeet", {})["enabled"] = True
     else:
