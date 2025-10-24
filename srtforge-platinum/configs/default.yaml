@@ -30,7 +30,7 @@ chunking:
   overlap: 1.0
 models:
   salm_id: nvidia/canary-qwen-2.5b
-  parakeet_id: nvidia/parakeet-rnnt-1.1b
+  parakeet_id: nvidia/parakeet-tdt-0.6b-v2
 salm_context:
   carry_sentences: 2
   max_prompt_tokens: 256

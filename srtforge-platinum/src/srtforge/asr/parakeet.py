@@ -20,7 +20,7 @@ log = get_logger("asr.parakeet")
 
 @dataclass(slots=True)
 class ParakeetConfig:
-    model_id: str = "nvidia/parakeet-rnnt-1.1b"
+    model_id: str = "nvidia/parakeet-tdt-0.6b-v2"
     use_gpu: bool = True
 
 
