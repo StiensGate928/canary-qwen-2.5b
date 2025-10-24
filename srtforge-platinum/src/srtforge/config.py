@@ -60,7 +60,7 @@ class ChunkConfig:
 @dataclass(slots=True)
 class ModelsConfig:
     salm_id: str = "nvidia/canary-qwen-2.5b"
-    parakeet_id: str = "nvidia/parakeet-rnnt-1.1b"
+    parakeet_id: str = "nvidia/parakeet-tdt-0.6b-v2"
 
 
 @dataclass(slots=True)

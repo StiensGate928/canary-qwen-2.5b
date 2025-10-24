@@ -75,7 +75,7 @@ Use the NeMo CLI to pull the latest models:
 
 ```bash
 python -m nemo.collections.asr.models.language_modeling.salm.download --model nvidia/canary-qwen-2.5b
-python -m nemo.collections.asr.models.asr_model --model nvidia/parakeet-rnnt-1.1b --download
+python -m nemo.collections.asr.models.asr_model --model nvidia/parakeet-tdt-0.6b-v2 --download
 ```
 
 You can verify available model IDs with either the [Hugging Face CLI](https://huggingface.co/docs/huggingface_hub/quick-start#download-a-model)
