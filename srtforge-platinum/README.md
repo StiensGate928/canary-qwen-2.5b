@@ -176,6 +176,10 @@ files in `configs/default.yaml -> paths.temp_dir`.
 * NeMo import errors: ensure `nemo_toolkit` and `hydra-core` are installed in the
   active environment. The optional `.[dev]` extra brings in lint/test tooling but
   not NeMo itself.
+* `ModuleNotFoundError: No module named 'megatron'`: recent NeMo releases expect
+  the [`megatron-core`](https://pypi.org/project/megatron-core/) wheel. Install
+  it with `pip install megatron-core` (Linux/WSL recommended; Windows-native
+  wheels are not published).
 * GPU memory pressure: reduce `chunking.max_len` to ~24 s windows and consider
   `--cpu` for functional testing.
 

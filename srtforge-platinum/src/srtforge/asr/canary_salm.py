@@ -38,8 +38,13 @@ class CanarySALM:
 
     def __init__(self, cfg: SALMConfig) -> None:
         if SALM is None:  # pragma: no cover - exercised in integration flows
+            hint = "Ensure NeMo is installed."
+            if isinstance(_SALM_IMPORT_ERROR, ModuleNotFoundError) and getattr(
+                _SALM_IMPORT_ERROR, "name", ""
+            ) == "megatron":
+                hint += " Install the optional 'megatron-core' package (``pip install megatron-core``) required by newer NeMo releases."
             raise RuntimeError(
-                "NeMo SALM is not available. Ensure NeMo is installed."
+                f"NeMo SALM is not available. {hint}"
             ) from _SALM_IMPORT_ERROR
         self.cfg = cfg
         try:
