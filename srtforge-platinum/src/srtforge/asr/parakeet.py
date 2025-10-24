@@ -29,8 +29,13 @@ class ParakeetASR:
 
     def __init__(self, cfg: ParakeetConfig) -> None:
         if nemo_asr is None:  # pragma: no cover - integration runtime
+            hint = "Install NeMo to use Parakeet."
+            if isinstance(_PARAKEET_IMPORT_ERROR, ModuleNotFoundError) and getattr(
+                _PARAKEET_IMPORT_ERROR, "name", ""
+            ) == "megatron":
+                hint += " Install the optional 'megatron-core' package (``pip install megatron-core``) to satisfy the NeMo dependency."
             raise RuntimeError(
-                "NeMo ASR is not available. Install NeMo to use Parakeet."
+                f"NeMo ASR is not available. {hint}"
             ) from _PARAKEET_IMPORT_ERROR
         self.cfg = cfg
         try:
