@@ -60,16 +60,27 @@ class ParakeetASR:
 
         try:
             hyps = self.model.transcribe(
-                paths2audio_files=[str(wav)], return_hypotheses=True
+                [str(wav)],
+                batch_size=1,
+                return_hypotheses=True,
+                timestamps=True,
             )
         except Exception as exc:  # pragma: no cover - runtime specific
             log.warning("Parakeet transcription failed: %s", exc)
             return "", []
 
-        if not hyps or not hyps[0]:
+        if not hyps:
             return "", []
-        hyp = hyps[0][0]
-        text = getattr(hyp, "text", "")
+        hyp0 = hyps[0]
+        if isinstance(hyp0, list):
+            hyp = hyp0[0] if hyp0 else ""
+        else:
+            hyp = hyp0
+
+        if hasattr(hyp, "text"):
+            text = hyp.text
+        else:
+            text = str(hyp)
         timestamps: List[Tuple[str, float, float]] = []
         if hasattr(hyp, "words") and hyp.words:
             for word in hyp.words:
