@@ -207,7 +207,6 @@ class SubtitlePipeline:
         preprocess_and_resample_16k(
             separated_source,
             cleaned,
-            arnndn_model=self._config.frontend.arnndn_model,
             afftdn_nf=self._config.frontend.afftdn_nf,
             enable_denoise=self._config.frontend.denoise,
             enable_normalize=self._config.frontend.normalize,

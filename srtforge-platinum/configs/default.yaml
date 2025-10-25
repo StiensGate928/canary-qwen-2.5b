@@ -3,7 +3,6 @@ paths:
   output_dir: ./output
 frontend:
   prefer_center: true
-  arnndn_model: rnnoise
   afftdn_nf: -25.0
   denoise: true
   normalize: true
