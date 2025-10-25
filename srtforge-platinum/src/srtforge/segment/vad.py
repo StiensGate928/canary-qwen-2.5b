@@ -60,8 +60,12 @@ def invert_silences(silences: Sequence[SilenceInterval], total_duration: float) 
     return speech
 
 
-def merge_speech_spans(spans: Iterable[Tuple[float, float]], pad: float = 0.0) -> List[SpeechInterval]:
-    """Merge overlapping spans applying a symmetric pad."""
+def merge_speech_spans(
+    spans: Iterable[Tuple[float, float]],
+    pad: float = 0.0,
+    merge_gap: float = 0.0,
+) -> List[SpeechInterval]:
+    """Merge overlapping spans applying a symmetric pad and gap tolerance."""
     padded = [SpeechInterval(start=max(0.0, s - pad), end=e + pad) for s, e in spans]
     padded.sort(key=lambda interval: interval.start)
     merged: List[SpeechInterval] = []
@@ -70,7 +74,7 @@ def merge_speech_spans(spans: Iterable[Tuple[float, float]], pad: float = 0.0) -
             merged.append(interval)
             continue
         last = merged[-1]
-        if interval.start <= last.end:
+        if interval.start <= last.end + merge_gap:
             merged[-1] = SpeechInterval(last.start, max(last.end, interval.end))
         else:
             merged.append(interval)

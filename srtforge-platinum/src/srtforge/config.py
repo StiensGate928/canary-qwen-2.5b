@@ -45,13 +45,15 @@ class SeparationConfig:
 
 @dataclass(slots=True)
 class VadConfig:
-    noise_db: float = -33.0
-    min_silence: float = 0.35
-    pad: float = 0.10
+    noise_db: float = -30.0
+    min_silence: float = 0.40
+    pad: float = 0.12
+    merge_gap: float = 0.30
 
 
 @dataclass(slots=True)
 class ChunkConfig:
+    min_len: float = 30.0
     max_len: float = 36.0
     overlap: float = 1.0
 
@@ -157,8 +159,18 @@ def apply_overrides(config: PipelineConfig, overrides: Dict[str, Any]) -> Pipeli
 
 def validate_config(config: PipelineConfig) -> None:
     """Validate logical invariants of the pipeline configuration."""
+    if config.chunking.min_len <= 0:
+        raise ValueError("Minimum chunk length must be positive")
+    if config.chunking.max_len <= 0:
+        raise ValueError("Maximum chunk length must be positive")
+    if config.chunking.min_len > config.chunking.max_len:
+        raise ValueError("Minimum chunk length cannot exceed maximum chunk length")
     if config.chunking.overlap >= config.chunking.max_len:
         raise ValueError("Overlap must be smaller than maximum chunk length")
+    if config.chunking.overlap < 0:
+        raise ValueError("Overlap must be non-negative")
+    if config.vad.merge_gap < 0:
+        raise ValueError("VAD merge gap must be non-negative")
     if config.reading.max_lines < 1:
         raise ValueError("At least one subtitle line must be allowed")
     if config.reading.max_chars_per_line <= 0:

@@ -68,6 +68,7 @@ class SubtitlePipeline:
         chunker = Chunker(
             max_len=self._config.chunking.max_len,
             overlap=self._config.chunking.overlap,
+            min_len=self._config.chunking.min_len,
         )
         spans: List[Tuple[float, float]] = [(0.0, duration)]
         vad_cfg = self._config.vad
@@ -87,7 +88,7 @@ class SubtitlePipeline:
                 audio_path,
                 exc,
             )
-        merged = merge_speech_spans(spans, pad=vad_cfg.pad)
+        merged = merge_speech_spans(spans, pad=vad_cfg.pad, merge_gap=vad_cfg.merge_gap)
         return chunker.chunk(merged)
 
     def _cut_chunk(self, source: Path, start: float, end: float, target: Path) -> None:
@@ -367,6 +368,7 @@ def build_parser() -> argparse.ArgumentParser:
     transcribe.add_argument("--bandit-model-name", type=str)
     transcribe.add_argument("--keywords", type=Path, default=None)
     transcribe.add_argument("--cpu", action="store_true")
+    transcribe.add_argument("--min-chunk", type=float, dest="min_chunk")
     transcribe.add_argument("--max-chunk", type=float, dest="max_chunk")
     transcribe.add_argument("--overlap", type=float, dest="chunk_overlap")
     transcribe.add_argument("--with-parakeet", action="store_true")
@@ -402,6 +404,8 @@ def _apply_cli_overrides(config: PipelineConfig, args: argparse.Namespace) -> Pi
             overrides.setdefault("separation", {}).setdefault("bandit", {})["cfg"] = args.sep_cfg
     if args.bandit_model_name:
         overrides.setdefault("separation", {}).setdefault("bandit", {})["model_name"] = args.bandit_model_name
+    if args.min_chunk is not None:
+        overrides.setdefault("chunking", {})["min_len"] = float(args.min_chunk)
     if args.max_chunk is not None:
         overrides.setdefault("chunking", {})["max_len"] = float(args.max_chunk)
     if args.chunk_overlap is not None:
