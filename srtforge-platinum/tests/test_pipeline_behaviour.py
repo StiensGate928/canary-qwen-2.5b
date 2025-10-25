@@ -15,6 +15,7 @@ from srtforge.utils import ffmpeg
 def _build_pipeline(embed: bool = False) -> SubtitlePipeline:
     config = PipelineConfig()
     config.chunking.max_len = 10.0
+    config.chunking.min_len = 1.0
     config.chunking.overlap = 1.0
     config.vad.pad = 0.0
     return SubtitlePipeline(

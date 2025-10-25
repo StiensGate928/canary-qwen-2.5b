@@ -21,10 +21,12 @@ separation:
     cfg: "/models/bandit_vocals.yaml"
     model_name: "BandIt Vocals V7"
 vad:
-  noise_db: -33.0
-  min_silence: 0.35
-  pad: 0.1
+  noise_db: -30.0
+  min_silence: 0.4
+  pad: 0.12
+  merge_gap: 0.3
 chunking:
+  min_len: 30.0
   max_len: 36.0
   overlap: 1.0
 models:
