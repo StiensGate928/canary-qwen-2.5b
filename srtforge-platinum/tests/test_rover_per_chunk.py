@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import List
 
+import pytest
+
 from srtforge.combine import rover
 
 
@@ -29,3 +31,19 @@ def test_rover_runs_per_chunk(monkeypatch) -> None:
     assert len(consensus) == 3
     for chunk in consensus:
         assert chunk[0].split()[2].startswith("0.")
+
+
+def test_rover_binary_missing(monkeypatch) -> None:
+    rover._rover_executable.cache_clear()
+    monkeypatch.setattr(rover.shutil, "which", lambda name: None)
+    with pytest.raises(rover.RoverNotAvailableError):
+        rover._rover_executable()
+
+
+def test_rover_binary_cached(monkeypatch) -> None:
+    rover._rover_executable.cache_clear()
+    monkeypatch.setattr(rover.shutil, "which", lambda name: "/usr/bin/rover")
+    assert rover._rover_executable() == "/usr/bin/rover"
+    # ensure cache is used even if which returns None afterwards
+    monkeypatch.setattr(rover.shutil, "which", lambda name: None)
+    assert rover._rover_executable() == "/usr/bin/rover"
