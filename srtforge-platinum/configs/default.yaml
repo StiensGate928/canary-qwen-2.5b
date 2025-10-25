@@ -7,13 +7,13 @@ frontend:
   denoise: true
   normalize: true
 separation:
-  backend: bandit
+  backend: fv4
   sr_frontend_hz: 44100
   prefer_center: true
   fv4:
-    repo_dir: "/opt/mel-band-roformer"
-    cfg: "/models/config_vocals_mel_band_roformer.yaml"
-    ckpt: "/models/voc_fv4.ckpt"
+    repo_dir: "C:/srtforge/opt/mel-band-roformer"
+    cfg:      "C:/srtforge/models/voc_gabox.yaml"
+    ckpt:     "C:/srtforge/models/voc_fv4.ckpt"
     num_overlap: 6
   bandit:
     repo_dir: "/opt/bandit"
