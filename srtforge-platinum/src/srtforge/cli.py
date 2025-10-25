@@ -14,7 +14,7 @@ from .asr.parakeet import ParakeetASR, ParakeetConfig
 from .audio.extract import AudioExtractor
 from .audio.preprocess import preprocess_and_resample_16k
 from .audio.separate import separate_dialogue
-from .combine.rover import combine_per_chunk
+from .combine.rover import RoverNotAvailableError, combine_per_chunk
 from .config import (
     PipelineConfig,
     apply_overrides,
@@ -304,16 +304,20 @@ class SubtitlePipeline:
 
         final_texts = list(canary_texts)
         if parakeet and self._enable_rover and parakeet_ctms:
-            consensus_chunks = combine_per_chunk(
-                chunk_ranges,
-                canary_ctms,
-                parakeet_ctms,
-                method=self._config.combination.method,
-            )
-            final_texts = [
-                " ".join(line.split()[4] for line in chunk_ctm)
-                for chunk_ctm in consensus_chunks
-            ]
+            try:
+                consensus_chunks = combine_per_chunk(
+                    chunk_ranges,
+                    canary_ctms,
+                    parakeet_ctms,
+                    method=self._config.combination.method,
+                )
+            except RoverNotAvailableError as exc:
+                LOGGER.warning("ROVER disabled: %s", exc)
+            else:
+                final_texts = [
+                    " ".join(line.split()[4] for line in chunk_ctm)
+                    for chunk_ctm in consensus_chunks
+                ]
 
         writer = SRTWriter(self._config.reading)
         output_dir = self._config.paths.output_dir

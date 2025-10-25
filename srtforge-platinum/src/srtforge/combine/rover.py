@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess as sp
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 from typing import List, Tuple
 
@@ -12,9 +14,24 @@ from ..logging import get_logger
 log = get_logger("combine.rover")
 
 
+class RoverNotAvailableError(RuntimeError):
+    """Raised when the ROVER binary cannot be located."""
+
+
+@lru_cache(maxsize=None)
+def _rover_executable() -> str:
+    path = shutil.which("rover")
+    if not path:
+        raise RoverNotAvailableError(
+            "ROVER binary 'rover' not found on PATH. Install it or disable ROVER combination.",
+        )
+    return path
+
+
 def _run_rover(hyp_a_ctm: Path, hyp_b_ctm: Path, out_ctm: Path, method: str = "maxconf") -> None:
+    executable = _rover_executable()
     cmd = [
-        "rover",
+        executable,
         "-h",
         str(hyp_a_ctm),
         "ctm",
@@ -56,4 +73,4 @@ def combine_per_chunk(
     return consensus_per_chunk
 
 
-__all__ = ["combine_per_chunk"]
+__all__ = ["RoverNotAvailableError", "combine_per_chunk"]
