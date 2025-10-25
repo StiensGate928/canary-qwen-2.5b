@@ -23,7 +23,7 @@ def build_preprocess_filter_chain(
         filters.append(f"afftdn=nf={afftdn_nf}")
     filters.extend(
         [
-            "deesser=i=6",
+            "deesser=i=0.6",
             "acompressor=threshold=-22dB:ratio=2:attack=5:release=50:makeup=2",
         ]
     )
