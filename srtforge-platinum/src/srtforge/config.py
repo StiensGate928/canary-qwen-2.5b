@@ -13,7 +13,6 @@ import yaml
 @dataclass(slots=True)
 class FrontendConfig:
     prefer_center: bool = True
-    arnndn_model: str = "rnnoise"
     afftdn_nf: float = -25.0
     denoise: bool = True
     normalize: bool = True
