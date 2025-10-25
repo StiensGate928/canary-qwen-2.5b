@@ -121,13 +121,23 @@ class CanarySALM:
             ids = self.model.generate(prompts=prompts)
 
         tokens = ids
-        if torch is not None and isinstance(tokens, torch.Tensor):
-            tokens = tokens.cpu()
-        if isinstance(tokens, (list, tuple)):
-            tokens = tokens[0]
-            if torch is not None and isinstance(tokens, torch.Tensor):
-                tokens = tokens.cpu()
-        text = self.tokenizer.ids_to_text(tokens).strip()
+        shp = getattr(tokens, "shape", None)
+        log.debug("SALM returned tokens type=%s, shape=%s", type(tokens), shp)
+
+        out = tokens
+        if isinstance(out, dict) and "tokens" in out:
+            out = out["tokens"]
+
+        if torch is not None and isinstance(out, torch.Tensor):
+            if out.ndim > 1:
+                out = out[0]
+            out = out.detach().cpu().tolist()
+        elif isinstance(out, (list, tuple)) and out and torch is not None and isinstance(out[0], torch.Tensor):
+            out = [int(t.item()) for t in out]
+        else:
+            out = [int(x) for x in out]
+
+        text = self.tokenizer.ids_to_text(out).strip()
         return text
 
 
