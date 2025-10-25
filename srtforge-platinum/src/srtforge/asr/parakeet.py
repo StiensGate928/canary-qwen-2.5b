@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
 try:  # pragma: no cover - exercised when NeMo is installed
     import nemo.collections.asr as nemo_asr
@@ -53,14 +53,12 @@ class ParakeetASR:
                 f"Failed to load Parakeet '{cfg.model_id}'. Verify the model id and installation."
             ) from exc
 
-    def transcribe_with_word_times(
-        self, wav: Path
-    ) -> Tuple[str, List[Tuple[str, float, float]]]:
-        """Return (text, [(word, start, end), ...]) for ``wav``."""
+    def transcribe_with_word_times(self, wav_path: Path) -> tuple[str, List[Tuple[str, float, float]]]:
+        """Return (text, [(word, start, end), ...]) for ``wav_path``."""
 
         try:
             hyps = self.model.transcribe(
-                [str(wav)],
+                [str(wav_path)],
                 batch_size=1,
                 return_hypotheses=True,
                 timestamps=True,
@@ -71,23 +69,46 @@ class ParakeetASR:
 
         if not hyps:
             return "", []
-        hyp0 = hyps[0]
-        if isinstance(hyp0, list):
-            hyp = hyp0[0] if hyp0 else ""
-        else:
-            hyp = hyp0
+
+        hyp = hyps[0]
+        if isinstance(hyp, list) and hyp:
+            hyp = hyp[0]
 
         if hasattr(hyp, "text"):
-            text = hyp.text
+            text: str = hyp.text
+        elif isinstance(hyp, str):
+            text = hyp
         else:
-            text = str(hyp)
-        timestamps: List[Tuple[str, float, float]] = []
-        if hasattr(hyp, "words") and hyp.words:
-            for word in hyp.words:
-                start = float(getattr(word, "start_offset", 0.0))
-                end = float(getattr(word, "end_offset", start))
-                timestamps.append((word.word, start, end))
-        return text, timestamps
+            text = ""
+
+        word_times: List[Tuple[str, float, float]] = []
+
+        ts = getattr(hyp, "timestep", None) or getattr(hyp, "timestamp", None)
+        if isinstance(ts, dict):
+            entries: Union[list, None] = ts.get("word") or ts.get("words")
+            if isinstance(entries, list):
+                for item in entries:
+                    if isinstance(item, (list, tuple)) and len(item) >= 3:
+                        w, s, e = item[0], item[1], item[2]
+                    elif isinstance(item, dict):
+                        w = item.get("word") or item.get("text") or ""
+                        s = item.get("start_time") or item.get("start") or item.get("ts")
+                        e = item.get("end_time") or item.get("end") or item.get("te")
+                    else:
+                        continue
+
+                    if s is None or e is None:
+                        continue
+
+                    try:
+                        s = float(s)
+                        e = float(e)
+                    except Exception:
+                        continue
+
+                    word_times.append((str(w), s, e))
+
+        return text, word_times
 
 
 __all__ = ["ParakeetASR", "ParakeetConfig"]
