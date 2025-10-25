@@ -119,9 +119,9 @@ def separate_dialogue(
                 str(in_dir),
                 "--store_dir",
                 str(out_dir),
-                "--num_overlap",
-                str(fv4_num_overlap),
             ]
+            # FV4 currently rejects the --num_overlap flag; re-enable when supported
+            # cmd += ["--num_overlap", str(fv4_num_overlap)]
             _run(cmd, cwd=fv4_repo_dir)
             vocals = _find_vocals_from_folder(out_dir)
             shutil.copy2(vocals, output_wav)
